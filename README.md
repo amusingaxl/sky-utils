@@ -32,7 +32,7 @@ The converter performs a three-step atomic conversion:
 graph LR
     A[sUSDS] -->|Redeem| B[USDS]
     B -->|Convert 1:1| C[DAI]
-    C -->|LitePSM Swap| D[USDC]
+    C -->|buyGem via LitePSM| D[USDC]
 
     style A fill:#e1f5fe
     style B fill:#fff3e0
@@ -45,8 +45,8 @@ graph LR
 The reverse conversion flow:
 
 ```mermaid
-graph RL
-    A[USDC] -->|LitePSM Swap| B[DAI]
+graph LR
+    A[USDC] -->|sellGem via LitePSM| B[DAI]
     B -->|Convert 1:1| C[USDS]
     C -->|Deposit| D[sUSDS]
 
@@ -55,6 +55,8 @@ graph RL
     style C fill:#fff3e0
     style D fill:#e1f5fe
 ```
+
+*Note: The converter automatically manages LitePSM's DAI buffer by checking liquidity and calling `fill()` if needed before the swap.*
 
 ##### DAI Buffer Management
 
@@ -67,6 +69,8 @@ The LitePSM maintains a pre-minted DAI buffer for efficient swaps. When converti
 This ensures conversions succeed even when the PSM's buffer is temporarily depleted.
 
 #### Detailed Flow
+
+##### sUSDS to GEM Conversion
 
 ```mermaid
 sequenceDiagram
@@ -85,6 +89,34 @@ sequenceDiagram
     Converter->>LitePSM: buyGem(amount/factor)
     LitePSM-->>Converter: GEM tokens
     Converter->>User: transfer GEM to destination
+```
+
+##### GEM to sUSDS Conversion
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Converter
+    participant LitePSM
+    participant DAI_USDS
+    participant sUSDS
+
+    User->>Converter: gemToSusds(destination, amount)
+    Converter->>User: transferFrom(GEM tokens)
+    
+    Note over Converter,LitePSM: Check and ensure DAI liquidity
+    Converter->>LitePSM: balanceOf(DAI)
+    alt Insufficient DAI balance
+        Converter->>LitePSM: rush()
+        Converter->>LitePSM: fill()
+    end
+    
+    Converter->>LitePSM: sellGem(amount)
+    LitePSM-->>Converter: DAI tokens
+    Converter->>DAI_USDS: daiToUsds(DAI amount)
+    DAI_USDS-->>Converter: USDS tokens
+    Converter->>sUSDS: deposit(USDS, destination)
+    sUSDS-->>destination: sUSDS shares
 ```
 
 ### Usage
@@ -159,6 +191,7 @@ graph TB
         H[allGemToSusds]
         I[_susdsToGem internal]
         J[_gemToSusds internal]
+        K[_ensureDaiLiquidity internal]
     end
 
     D -->|Validates & Stores| A
@@ -173,8 +206,10 @@ graph TB
     H --> J
     I -->|Redeem| A
     I -->|Convert| B
-    I -->|Buy| C
-    J -->|Sell| C
+    I -->|buyGem| C
+    J --> K
+    K -->|rush/fill| C
+    J -->|sellGem| C
     J -->|Convert| B
     J -->|Deposit| A
 ```
