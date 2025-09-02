@@ -9,6 +9,13 @@ pragma solidity ^0.8.24;
  *      - sUSDS -> GEM: sUSDS -> USDS -> DAI -> GEM
  *      - GEM -> sUSDS: GEM -> DAI -> USDS -> sUSDS
  *
+ *      DAI Liquidity Management:
+ *      The LitePSM uses a pre-minted DAI buffer for efficient swaps. When converting
+ *      GEM -> sUSDS, if the PSM's DAI balance is insufficient, this contract will:
+ *      1. Check if enough liquidity can be obtained via rush() (available minting capacity)
+ *      2. Call fill() to mint additional DAI into the PSM if needed
+ *      This ensures swaps can proceed even when the PSM's buffer is depleted.
+ *
  *      Note: DAI-USDS conversion is always 1:1, so from a user perspective, the conversion
  *      appears as sUSDS <-> USDS <-> GEM. Error messages reference USDS instead of DAI
  *      to simplify the mental model for users.
@@ -178,10 +185,11 @@ contract SusdsGem {
 
         if (balance < minDai) {
             // Check if filling the buffer will provide enough liquidity
+            // rush() returns the amount of DAI that can be minted
             uint256 rush = LitePSMLike(LITE_PSM).rush();
             require(minDai <= balance + rush, "SusdsGem/insufficient-liquidity");
 
-            // Fill the buffer
+            // Fill the buffer by minting DAI into the PSM
             LitePSMLike(LITE_PSM).fill();
         }
     }

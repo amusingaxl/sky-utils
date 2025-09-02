@@ -1,13 +1,14 @@
 # Sky Utils
 
 ⚠️ **IMPORTANT SECURITY NOTICE** ⚠️
+
 > **This code has NOT been audited. Use at your own risk.**
-> 
+>
 > This repository contains experimental smart contracts that have not undergone formal security auditing. Do not use in production without proper review and auditing.
 
 ## Overview
 
-Sky Utils provides smart contracts for interacting with the Sky Protocol. 
+Sky Utils provides smart contracts for interacting with the Sky Protocol.
 
 ## SusdsGem
 
@@ -24,6 +25,7 @@ This contract enables seamless bidirectional conversion between sUSDS (Savings U
 ### How It Works
 
 #### sUSDS to USDC
+
 The converter performs a three-step atomic conversion:
 
 ```mermaid
@@ -31,7 +33,7 @@ graph LR
     A[sUSDS] -->|Redeem| B[USDS]
     B -->|Convert 1:1| C[DAI]
     C -->|LitePSM Swap| D[USDC]
-    
+
     style A fill:#e1f5fe
     style B fill:#fff3e0
     style C fill:#fff3e0
@@ -39,6 +41,7 @@ graph LR
 ```
 
 #### USDC to sUSDS
+
 The reverse conversion flow:
 
 ```mermaid
@@ -46,12 +49,22 @@ graph RL
     A[USDC] -->|LitePSM Swap| B[DAI]
     B -->|Convert 1:1| C[USDS]
     C -->|Deposit| D[sUSDS]
-    
+
     style A fill:#e8f5e9
     style B fill:#fff3e0
     style C fill:#fff3e0
     style D fill:#e1f5fe
 ```
+
+##### DAI Buffer Management
+
+The LitePSM maintains a pre-minted DAI buffer for efficient swaps. When converting USDC to sUSDS, if the PSM's DAI balance is insufficient, the converter automatically:
+
+1. Checks available minting capacity via `rush()`
+2. Calls `fill()` to mint additional DAI if needed
+3. Proceeds with the swap
+
+This ensures conversions succeed even when the PSM's buffer is temporarily depleted.
 
 #### Detailed Flow
 
@@ -62,7 +75,7 @@ sequenceDiagram
     participant sUSDS
     participant DAI_USDS
     participant LitePSM
-    
+
     User->>Converter: susdsToGem(destination, amount)
     Converter->>sUSDS: transferFrom(user, converter, amount)
     Converter->>sUSDS: redeem(amount)
@@ -82,27 +95,27 @@ sequenceDiagram
 interface ISusdsGem {
     // Convert specific amount with no slippage tolerance
     function susdsToGem(address destination, uint256 sUsdsWad) external;
-    
+
     // Convert with custom slippage tolerance (in basis points)
     function susdsToGem(address destination, uint256 sUsdsWad, uint256 maxSlippageBps) external;
-    
+
     // Convert entire sUSDS balance
     function allSusdsToGem(address destination) external;
-    
+
     // Convert all with slippage tolerance
     function allSusdsToGem(address destination, uint256 maxSlippageBps) external;
-    
+
     // Reverse conversions: USDC to sUSDS
-    
+
     // Convert specific amount with no slippage tolerance
     function gemToSusds(address destination, uint256 gemAmt) external;
-    
+
     // Convert with custom slippage tolerance (in basis points)
     function gemToSusds(address destination, uint256 gemAmt, uint256 maxSlippageBps) external;
-    
+
     // Convert entire USDC balance
     function allGemToSusds(address destination) external;
-    
+
     // Convert all with slippage tolerance
     function allGemToSusds(address destination, uint256 maxSlippageBps) external;
 }
@@ -137,7 +150,7 @@ graph TB
         B[DAI-USDS Converter]
         C[LitePSM]
     end
-    
+
     subgraph "SusdsGem"
         D[Constructor]
         E[susdsToGem]
@@ -147,13 +160,13 @@ graph TB
         I[_susdsToGem internal]
         J[_gemToSusds internal]
     end
-    
+
     D -->|Validates & Stores| A
     D -->|Validates & Stores| B
     D -->|Validates & Stores| C
     D -->|Approves Max| B
     D -->|Approves Max| C
-    
+
     E --> I
     F --> I
     G --> J
@@ -170,9 +183,9 @@ graph TB
 
 #### Ethereum Mainnet
 
-| Contract            | Address   |
-| ----------          | --------- |
-| SusdsGem            | TODO      |
+| Contract | Address |
+| -------- | ------- |
+| SusdsGem | TODO    |
 
 ### Security Considerations
 
@@ -199,6 +212,7 @@ This codebase has **NOT** been audited by professional security firms. Users sho
 - Conversions may fail during extreme market conditions
 - Gas costs vary based on network congestion
 - Dependent on external protocol availability
+- USDC to sUSDS conversions require sufficient LitePSM buffer capacity or available minting capacity (rush)
 
 ### Testing
 
