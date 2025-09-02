@@ -3,9 +3,12 @@ pragma solidity ^0.8.24;
 
 /**
  * @title SusdsGem
- * @notice Converter for sUSDS <-> GEM (e.g., USDC) conversions
- * @dev This contract handles conversions between sUSDS and various gems (stablecoins) through
- *      the following intermediary steps:
+ * @author amusingaxl
+ * @notice Atomic converter for sUSDS <-> GEM (e.g., USDC) conversions via Sky Protocol
+ * @dev This contract provides gas-efficient, atomic conversions between sUSDS and gems (stablecoins)
+ *      through Sky Protocol's conversion infrastructure. All operations are non-custodial and atomic.
+ *
+ *      Conversion paths:
  *      - sUSDS -> GEM: sUSDS -> USDS -> DAI -> GEM
  *      - GEM -> sUSDS: GEM -> DAI -> USDS -> sUSDS
  *
@@ -51,17 +54,43 @@ interface LitePSMLike {
     function buf() external view returns (uint256);
 }
 
+/**
+ * @title SusdsGem
+ * @notice Non-custodial converter for atomic sUSDS <-> GEM swaps
+ * @dev All state variables are immutable for gas efficiency and security
+ */
 contract SusdsGem {
+    /// @notice Basis points constant for percentage calculations (100.00%)
     uint256 private constant BPS = 100_00;
 
+    /// @notice sUSDS token contract address
     address public immutable SUSDS;
+
+    /// @notice DAI-USDS converter contract address
     address public immutable DAI_USDS;
+
+    /// @notice LitePSM contract address for GEM swaps
     address public immutable LITE_PSM;
+
+    /// @notice USDS token address (derived from sUSDS)
     address public immutable USDS;
+
+    /// @notice DAI token address (derived from LitePSM)
     address public immutable DAI;
+
+    /// @notice GEM token address (e.g., USDC, derived from LitePSM)
     address public immutable GEM;
+
+    /// @notice Conversion factor for decimal precision adjustment between DAI (18 decimals) and GEM
     uint256 public immutable CONVERSION_FACTOR;
 
+    /**
+     * @notice Initializes the converter with Sky Protocol contracts
+     * @dev Sets up all necessary approvals and validates contract compatibility
+     * @param _sUSDS Address of the sUSDS token contract
+     * @param _DAI_USDS Address of the DAI-USDS converter contract
+     * @param _LITE_PSM Address of the LitePSM contract for the target GEM
+     */
     constructor(address _sUSDS, address _DAI_USDS, address _LITE_PSM) {
         SUSDS = _sUSDS;
         DAI_USDS = _DAI_USDS;
@@ -92,27 +121,58 @@ contract SusdsGem {
         ERC20Like(USDS).approve(_sUSDS, type(uint256).max);
     }
 
+    /**
+     * @notice Converts sUSDS to GEM with no slippage tolerance
+     * @param dst Address to receive the GEM tokens
+     * @param sUsdsWad Amount of sUSDS to convert (in wad precision, 18 decimals)
+     * @return gemAmt Amount of GEM tokens sent to destination
+     */
     function susdsToGem(address dst, uint256 sUsdsWad) external returns (uint256 gemAmt) {
         // No slippage tolerance - expect exact 1:1:1 conversion from USDS to Dai to gem
         return _susdsToGem(dst, sUsdsWad, 0);
     }
 
+    /**
+     * @notice Converts sUSDS to GEM with custom slippage protection
+     * @param dst Address to receive the GEM tokens
+     * @param sUsdsWad Amount of sUSDS to convert (in wad precision, 18 decimals)
+     * @param maxSlippageBps Maximum acceptable slippage in basis points (1 BPS = 0.01%)
+     * @return gemAmt Amount of GEM tokens sent to destination
+     */
     function susdsToGem(address dst, uint256 sUsdsWad, uint256 maxSlippageBps) external returns (uint256 gemAmt) {
         return _susdsToGem(dst, sUsdsWad, maxSlippageBps);
     }
 
+    /**
+     * @notice Converts entire sUSDS balance to GEM with no slippage tolerance
+     * @param dst Address to receive the GEM tokens
+     * @return gemAmt Amount of GEM tokens sent to destination
+     */
     function allSusdsToGem(address dst) external returns (uint256 gemAmt) {
         uint256 sUsdsBalance = ERC20Like(SUSDS).balanceOf(msg.sender);
         require(sUsdsBalance > 0, "SusdsGem/no-susds-balance");
         return _susdsToGem(dst, sUsdsBalance, 0);
     }
 
+    /**
+     * @notice Converts entire sUSDS balance to GEM with custom slippage protection
+     * @param dst Address to receive the GEM tokens
+     * @param maxSlippageBps Maximum acceptable slippage in basis points (1 BPS = 0.01%)
+     * @return gemAmt Amount of GEM tokens sent to destination
+     */
     function allSusdsToGem(address dst, uint256 maxSlippageBps) external returns (uint256 gemAmt) {
         uint256 sUsdsBalance = ERC20Like(SUSDS).balanceOf(msg.sender);
         require(sUsdsBalance > 0, "SusdsGem/no-susds-balance");
         return _susdsToGem(dst, sUsdsBalance, maxSlippageBps);
     }
 
+    /**
+     * @dev Internal function to handle sUSDS to GEM conversion
+     * @param dst Destination address for GEM tokens
+     * @param sUsdsWad Amount of sUSDS to convert
+     * @param maxSlippageBps Maximum acceptable slippage in basis points
+     * @return gemAmt Amount of GEM tokens transferred to destination
+     */
     function _susdsToGem(address dst, uint256 sUsdsWad, uint256 maxSlippageBps) internal returns (uint256 gemAmt) {
         require(maxSlippageBps <= BPS, "SusdsGem/slippage-too-high");
 
@@ -133,30 +193,61 @@ contract SusdsGem {
 
         // Check slippage - daiUsed should be approximately equal to usdsWad
         // Note: Since DAI-USDS conversion is always 1:1, we treat DAI amounts as USDS for user-facing messages
-        uint256 maxUsableDai = usdsWad * (BPS + maxSlippageBps) / BPS;
-        require(daiUsed <= maxUsableDai, "SusdsGem/too-much-usds-used");
+        uint256 maxDai = usdsWad * (BPS + maxSlippageBps) / BPS;
+        require(daiUsed <= maxDai, "SusdsGem/too-much-usds-used");
     }
 
+    /**
+     * @notice Converts GEM to sUSDS with no slippage tolerance
+     * @param dst Address to receive the sUSDS tokens
+     * @param gemAmt Amount of GEM to convert (in GEM precision)
+     * @return susdsWad Amount of sUSDS tokens sent to destination
+     */
     function gemToSusds(address dst, uint256 gemAmt) external returns (uint256 susdsWad) {
         return _gemToSusds(dst, gemAmt, 0);
     }
 
+    /**
+     * @notice Converts GEM to sUSDS with custom slippage protection
+     * @param dst Address to receive the sUSDS tokens
+     * @param gemAmt Amount of GEM to convert (in GEM precision)
+     * @param maxSlippageBps Maximum acceptable slippage in basis points (1 BPS = 0.01%)
+     * @return susdsWad Amount of sUSDS tokens sent to destination
+     */
     function gemToSusds(address dst, uint256 gemAmt, uint256 maxSlippageBps) external returns (uint256 susdsWad) {
         return _gemToSusds(dst, gemAmt, maxSlippageBps);
     }
 
+    /**
+     * @notice Converts entire GEM balance to sUSDS with no slippage tolerance
+     * @param dst Address to receive the sUSDS tokens
+     * @return susdsWad Amount of sUSDS tokens sent to destination
+     */
     function allGemToSusds(address dst) external returns (uint256 susdsWad) {
         uint256 gemBalance = ERC20Like(GEM).balanceOf(msg.sender);
         require(gemBalance > 0, "SusdsGem/no-gem-balance");
         return _gemToSusds(dst, gemBalance, 0);
     }
 
+    /**
+     * @notice Converts entire GEM balance to sUSDS with custom slippage protection
+     * @param dst Address to receive the sUSDS tokens
+     * @param maxSlippageBps Maximum acceptable slippage in basis points (1 BPS = 0.01%)
+     * @return susdsWad Amount of sUSDS tokens sent to destination
+     */
     function allGemToSusds(address dst, uint256 maxSlippageBps) external returns (uint256 susdsWad) {
         uint256 gemBalance = ERC20Like(GEM).balanceOf(msg.sender);
         require(gemBalance > 0, "SusdsGem/no-gem-balance");
         return _gemToSusds(dst, gemBalance, maxSlippageBps);
     }
 
+    /**
+     * @dev Internal function to handle GEM to sUSDS conversion
+     * @param dst Destination address for sUSDS tokens
+     * @param gemAmt Amount of GEM to convert
+     * @param maxSlippageBps Maximum acceptable slippage in basis points
+     * @return susdsWad Amount of sUSDS tokens transferred to destination
+     */
     function _gemToSusds(address dst, uint256 gemAmt, uint256 maxSlippageBps) internal returns (uint256 susdsWad) {
         require(maxSlippageBps <= BPS, "SusdsGem/slippage-too-high");
 
@@ -179,6 +270,19 @@ contract SusdsGem {
         require(susdsWad > 0, "SusdsGem/deposit-failed");
     }
 
+    /**
+     * @dev Ensures the LitePSM has sufficient DAI liquidity for the swap
+     * @param minDai Minimum amount of DAI needed for the swap
+     *
+     * The LitePSM maintains a pre-minted DAI buffer for efficient swaps.
+     * If the current balance is insufficient, this function will:
+     * 1. Check available minting capacity via rush()
+     * 2. Verify that current balance + rush() covers the needed amount
+     * 3. Call fill() to mint additional DAI into the PSM
+     *
+     * Reverts with "insufficient-liquidity" if the PSM cannot provide enough DAI
+     * even after filling the buffer.
+     */
     function _ensureDaiLiquidity(uint256 minDai) internal {
         // Check if there's enough DAI balance in the LitePSM for the swap
         uint256 balance = ERC20Like(DAI).balanceOf(LITE_PSM);
