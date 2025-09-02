@@ -15,13 +15,34 @@ interface IERC20 {
     function decimals() external view returns (uint8);
 }
 
+interface ISUSDS {
+    function convertToAssets(uint256 shares) external view returns (uint256 assets);
+}
+
 interface IDeal {
     function deal(address, address, uint256) external;
 }
 
-interface LitePSMTestLike {
+interface ILitePSM {
     function rush() external view returns (uint256);
-    function fill() external;
+    function fill() external returns (uint256);
+    function buf() external view returns (uint256);
+    function pocket() external view returns (address);
+    function vat() external view returns (address);
+    function ilk() external view returns (bytes32);
+    function trim() external returns (uint256);
+    function tin() external view returns (uint256);
+    function file(bytes32, uint256) external;
+    function wards(address) external view returns (uint256);
+}
+
+interface IVat {
+    function ilks(bytes32)
+        external
+        view
+        returns (uint256 Art, uint256 rate, uint256 spot, uint256 line, uint256 dust);
+    function urns(bytes32, address) external view returns (uint256 ink, uint256 art);
+    function frob(bytes32, address, address, address, int256, int256) external;
 }
 
 contract SusdsGemTest is Test {
@@ -70,10 +91,10 @@ contract SusdsGemTest is Test {
         deal(usds, susds, 100_000_000e18); // Fund sUSDS vault with 100M USDS
 
         // Check if PSM needs filling and fill it if necessary
-        if (LitePSMTestLike(litePsmUsdc).rush() > 0) {
+        if (ILitePSM(litePsmUsdc).rush() > 0) {
             // PSM needs liquidity - fund it with USDC and call fill
             deal(usdc, litePsmUsdc, 100_000_000e6); // 100M USDC
-            LitePSMTestLike(litePsmUsdc).fill();
+            ILitePSM(litePsmUsdc).fill();
         }
 
         // User approves converter for both directions
@@ -464,23 +485,39 @@ contract SusdsGemTest is Test {
     }
 
     function testFuzzMinimumAmounts(uint256 tinyAmount) public {
-        // Test behavior with very small amounts (less than conversion factor)
-        // For USDC with 6 decimals, CONVERSION_FACTOR is 1e12
-        // Any amount less than 1e12 should fail to convert
-        vm.assume(tinyAmount > 0 && tinyAmount < converter.CONVERSION_FACTOR());
+        // Test behavior with very small amounts
+        // The check happens on the USDS amount after redeeming sUSDS, not on the sUSDS input
+        // We need to ensure the redeemed USDS amount is less than CONVERSION_FACTOR
+
+        // Calculate a sUSDS amount that will redeem to less than CONVERSION_FACTOR USDS
+        // Account for sUSDS appreciation by using convertToAssets
+        uint256 maxUsdsForTest = converter.CONVERSION_FACTOR() - 1; // Just under the limit
+        uint256 maxSusdsShares = maxUsdsForTest * 1e18 / (ISUSDS(susds).convertToAssets(1e18) + 1); // Conservative estimate
+
+        tinyAmount = bound(tinyAmount, 1, maxSusdsShares);
 
         deal(susds, user, tinyAmount);
 
-        // Should revert for amounts too small to convert
-        vm.prank(user);
-        vm.expectRevert("SusdsGem/amount-too-small");
-        converter.susdsToGem(destination, tinyAmount);
+        // Check if this amount would produce less than CONVERSION_FACTOR USDS
+        uint256 expectedUsds = ISUSDS(susds).convertToAssets(tinyAmount);
+
+        if (expectedUsds < converter.CONVERSION_FACTOR()) {
+            // Should revert for amounts too small to convert
+            vm.prank(user);
+            vm.expectRevert("SusdsGem/amount-too-small");
+            converter.susdsToGem(destination, tinyAmount);
+        } else {
+            // Amount is actually large enough to convert
+            vm.prank(user);
+            uint256 gemReceived = converter.susdsToGem(destination, tinyAmount);
+            assertGt(gemReceived, 0, "Should receive some gem");
+        }
     }
 
     function testFuzzSlippageGemToSusds(uint256 gemAmount, uint256 slippageBps) public {
         // Test slippage protection for gem to sUSDS conversion
         gemAmount = bound(gemAmount, 100e6, 10_000e6); // 100 to 10k USDC
-        slippageBps = bound(slippageBps, 0, 10000);
+        slippageBps = bound(slippageBps, 0, 10001); // Allow testing above 10000
 
         deal(usdc, user, gemAmount);
 
@@ -489,12 +526,20 @@ contract SusdsGemTest is Test {
             vm.expectRevert("SusdsGem/slippage-too-high");
             converter.gemToSusds(destination, gemAmount, slippageBps);
         } else {
-            vm.prank(user);
-            uint256 susdsReceived = converter.gemToSusds(destination, gemAmount, slippageBps);
+            // Check if amount is too small after slippage
+            uint256 minAcceptableDai = gemAmount * converter.CONVERSION_FACTOR() * (10000 - slippageBps) / 10000;
+            if (minAcceptableDai == 0) {
+                vm.prank(user);
+                vm.expectRevert("SusdsGem/amount-too-small");
+                converter.gemToSusds(destination, gemAmount, slippageBps);
+            } else {
+                vm.prank(user);
+                uint256 susdsReceived = converter.gemToSusds(destination, gemAmount, slippageBps);
 
-            // Verify slippage protection works
-            uint256 expectedMin = (gemAmount * converter.CONVERSION_FACTOR()) * (10000 - slippageBps) / 10000;
-            assertGe(susdsReceived, expectedMin * 98 / 100, "Received less than minimum after slippage");
+                // Verify slippage protection works
+                uint256 expectedMin = (gemAmount * converter.CONVERSION_FACTOR()) * (10000 - slippageBps) / 10000;
+                assertGe(susdsReceived, expectedMin * 98 / 100, "Received less than minimum after slippage");
+            }
         }
     }
 
@@ -537,5 +582,159 @@ contract SusdsGemTest is Test {
         vm.prank(emptyUser);
         vm.expectRevert("SusdsGem/no-gem-balance");
         converter.allGemToSusds(destination);
+    }
+
+    // ============ Dai Liquidity Tests ============
+
+    function testDaiFillWhenNeeded() public {
+        // This test verifies that the converter calls fill() when the PSM lacks DAI but rush is available
+
+        address pocket = ILitePSM(litePsmUsdc).pocket();
+
+        // First, create rush by adding gems to the pocket
+        // This increases target debt (tArt = gem.balanceOf(pocket) * to18ConversionFactor + buf)
+        uint256 currentGemInPocket = IERC20(usdc).balanceOf(pocket);
+        deal(usdc, pocket, currentGemInPocket + 10_000_000e6); // Add 10M USDC to pocket
+
+        // Verify we now have rush
+        uint256 rushBefore = ILitePSM(litePsmUsdc).rush();
+        assertGt(rushBefore, 1000e18, "Should have created significant rush availability");
+
+        // Drain PSM's DAI balance to force buffer filling
+        uint256 psmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        vm.prank(litePsmUsdc);
+        IERC20(dai).transfer(address(0x999), psmDaiBalance);
+
+        // Verify PSM has no DAI
+        assertEq(IERC20(dai).balanceOf(litePsmUsdc), 0, "PSM should have no DAI");
+
+        // Now try to convert - should trigger fill
+        uint256 usdcAmt = 100e6;
+        uint256 initialDestBalance = IERC20(susds).balanceOf(destination);
+
+        vm.prank(user);
+        uint256 susdsReceived = converter.gemToSusds(destination, usdcAmt);
+
+        // Verify conversion succeeded
+        assertGt(susdsReceived, 0, "Should have received sUSDS after buffer fill");
+        assertEq(
+            IERC20(susds).balanceOf(destination) - initialDestBalance,
+            susdsReceived,
+            "Balance change should match return"
+        );
+
+        // Verify buffer was filled
+        uint256 finalPsmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        assertGt(finalPsmDaiBalance, 0, "PSM should have DAI after fill");
+
+        // Verify rush decreased
+        uint256 rushAfter = ILitePSM(litePsmUsdc).rush();
+        assertLt(rushAfter, rushBefore, "Rush should have decreased after fill");
+    }
+
+    function testRevertDaiFillWhenInsufficientLiquidity() public {
+        // Drain PSM DAI balance
+        uint256 psmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        vm.prank(litePsmUsdc);
+        IERC20(dai).transfer(address(0x999), psmDaiBalance);
+
+        // Drain rush by removing USDC from pocket (pocket holds gems, not DAI)
+        address pocket = ILitePSM(litePsmUsdc).pocket();
+        uint256 pocketUsdcBalance = IERC20(usdc).balanceOf(pocket);
+        vm.prank(pocket);
+        IERC20(usdc).transfer(address(0x999), pocketUsdcBalance);
+
+        // Verify rush is now 0 (no USDC in pocket means no ability to mint DAI)
+        uint256 rushAvailable = ILitePSM(litePsmUsdc).rush();
+        assertEq(rushAvailable, 0, "Rush should be 0 after draining pocket USDC");
+
+        // Now try conversion - should fail due to insufficient rush
+        uint256 usdcAmt = 100e6; // Even small amount should fail
+
+        vm.prank(user);
+        vm.expectRevert("SusdsGem/insufficient-liquidity");
+        converter.gemToSusds(destination, usdcAmt);
+    }
+
+    function testDaiNotFilledWhenSufficientLiquidity() public {
+        // Ensure PSM has plenty of DAI
+        deal(dai, litePsmUsdc, 10_000_000e18);
+
+        // Record initial state
+        uint256 initialPsmDai = IERC20(dai).balanceOf(litePsmUsdc);
+
+        // Small conversion that doesn't need fill
+        uint256 usdcAmt = 100e6;
+        vm.prank(user);
+        converter.gemToSusds(destination, usdcAmt);
+
+        // PSM balance should have decreased by roughly the amount used
+        uint256 finalPsmDai = IERC20(dai).balanceOf(litePsmUsdc);
+        assertApproxEqAbs(
+            finalPsmDai, initialPsmDai - usdcAmt * 1e12, converter.CONVERSION_FACTOR(), "PSM DAI should decrease"
+        );
+    }
+
+    function testDaiFillWithSlippage() public {
+        // This test verifies that when tin fee is enabled in LitePSM,
+        // the buffer check correctly accounts for the reduced DAI needed
+
+        address pauseProxy = 0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB;
+        address pocket = ILitePSM(litePsmUsdc).pocket();
+
+        // Set tin to 2% (0.02 * 1e18)
+        uint256 tinFee = 0.02e18;
+        vm.prank(pauseProxy);
+        ILitePSM(litePsmUsdc).file(bytes32("tin"), tinFee);
+
+        // Verify tin was set
+        assertEq(ILitePSM(litePsmUsdc).tin(), tinFee, "tin should be set to 2%");
+
+        // For 1000 USDC with 2% tin fee:
+        // - User sells 1000 USDC
+        // - PSM gives back 980 DAI (1000 * 1e12 * 0.98)
+        // - So buffer only needs 980 DAI, not 1000 DAI
+        uint256 usdcAmt = 1000e6;
+        uint256 slippageBps = 2_00; // 2% slippage tolerance in our contract
+        uint256 minDaiNeeded = usdcAmt * 1e12 * (10000 - slippageBps) / 10000; // 980e18
+
+        // Create rush by adding gems to pocket
+        uint256 currentGemInPocket = IERC20(usdc).balanceOf(pocket);
+        deal(usdc, pocket, currentGemInPocket + 2_000_000e6); // Add 2M USDC
+
+        // Verify we have enough rush
+        uint256 rushAvailable = ILitePSM(litePsmUsdc).rush();
+        assertGt(rushAvailable, minDaiNeeded, "Should have enough rush for swap with fee");
+
+        // Drain PSM's DAI balance to force buffer filling
+        uint256 psmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        vm.prank(litePsmUsdc);
+        IERC20(dai).transfer(address(0x999), psmDaiBalance);
+
+        // Verify PSM has no DAI
+        assertEq(IERC20(dai).balanceOf(litePsmUsdc), 0, "PSM should have no DAI");
+
+        // Convert with slippage tolerance - should succeed because buffer check accounts for the fee
+        vm.prank(user);
+        uint256 susdsReceived = converter.gemToSusds(destination, usdcAmt, slippageBps);
+
+        // Verify conversion succeeded
+        assertGt(susdsReceived, 0, "Should have received sUSDS");
+
+        // The buffer should have been filled with at least minDaiNeeded (980 DAI)
+        uint256 finalPsmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        assertGe(finalPsmDaiBalance, minDaiNeeded, "PSM should have enough DAI for swap with fee");
+
+        // Verify the actual USDS/DAI value underlying the sUSDS received is exactly 980 DAI
+        // With 2% tin fee, selling 1000 USDC yields exactly 980 DAI
+        uint256 expectedDaiReceived = usdcAmt * 1e12 * (1e18 - tinFee) / 1e18; // 980e18
+        uint256 actualUsdsValue = ISUSDS(susds).convertToAssets(susdsReceived);
+        // Allow for 1 gwei rounding difference due to sUSDS share conversion
+        assertApproxEqAbs(
+            actualUsdsValue,
+            expectedDaiReceived,
+            converter.CONVERSION_FACTOR(),
+            "sUSDS shares should convert to exactly 980 USDS/DAI assets after tin fee"
+        );
     }
 }

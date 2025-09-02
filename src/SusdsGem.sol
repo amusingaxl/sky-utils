@@ -39,6 +39,9 @@ interface LitePSMLike {
     function dai() external view returns (address);
     function gem() external view returns (address);
     function to18ConversionFactor() external view returns (uint256);
+    function rush() external view returns (uint256 wad);
+    function fill() external returns (uint256 wad);
+    function buf() external view returns (uint256);
 }
 
 contract SusdsGem {
@@ -152,12 +155,14 @@ contract SusdsGem {
 
         ERC20Like(GEM).transferFrom(msg.sender, address(this), gemAmt);
 
-        uint256 daiReceived = LitePSMLike(LITE_PSM).sellGem(address(this), gemAmt);
-        require(daiReceived > 0, "SusdsGem/sell-gem-failed");
-
         // Note: Since DAI-USDS conversion is always 1:1, we treat DAI amounts as USDS for user-facing messages
-        uint256 minAcceptableDai = gemAmt * CONVERSION_FACTOR * (BPS - maxSlippageBps) / BPS;
-        require(daiReceived >= minAcceptableDai, "SusdsGem/insufficient-usds");
+        uint256 minDai = gemAmt * CONVERSION_FACTOR * (BPS - maxSlippageBps) / BPS;
+        require(minDai > 0, "SusdsGem/amount-too-small");
+
+        _ensureDaiLiquidity(minDai);
+
+        uint256 daiReceived = LitePSMLike(LITE_PSM).sellGem(address(this), gemAmt);
+        require(daiReceived >= minDai, "SusdsGem/insufficient-usds");
 
         // DAI-USDS conversion is always 1:1
         DaiUsdsLike(DAI_USDS).daiToUsds(address(this), daiReceived);
@@ -165,5 +170,19 @@ contract SusdsGem {
         // Deposit USDS to get sUSDS shares directly to dst (daiReceived == usdsWad due to 1:1)
         susdsWad = SUSDSLike(SUSDS).deposit(daiReceived, dst);
         require(susdsWad > 0, "SusdsGem/deposit-failed");
+    }
+
+    function _ensureDaiLiquidity(uint256 minDai) internal {
+        // Check if there's enough DAI balance in the LitePSM for the swap
+        uint256 balance = ERC20Like(DAI).balanceOf(LITE_PSM);
+
+        if (balance < minDai) {
+            // Check if filling the buffer will provide enough liquidity
+            uint256 rush = LitePSMLike(LITE_PSM).rush();
+            require(minDai <= balance + rush, "SusdsGem/insufficient-liquidity");
+
+            // Fill the buffer
+            LitePSMLike(LITE_PSM).fill();
+        }
     }
 }
