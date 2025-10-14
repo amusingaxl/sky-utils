@@ -1,0 +1,38 @@
+# Compiler files
+cache/
+out/
+
+# Ignores development broadcast logs
+!/broadcast
+/broadcast/*/31337/
+/broadcast/**/dry-run/
+
+# Docs
+docs/
+
+# Dotenv file
+.env
+
+# Coverage
+lcov.info
+
+# Node modules (if using any JS tooling)
+node_modules/
+
+# DS_Store (macOS)
+.DS_Store
+
+# VSCode
+.vscode/
+
+# IntelliJ
+.idea/
+
+# Foundry default libraries
+lib/
+
+# Forge artifacts
+forge-cache/
+
+# Deployment artifacts
+deployments/
