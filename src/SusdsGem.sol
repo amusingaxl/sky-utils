@@ -30,7 +30,7 @@ interface ERC20Like {
     function balanceOf(address account) external view returns (uint256);
 }
 
-interface SUSDSLike {
+interface ERC4626Like {
     function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
     function deposit(uint256 assets, address receiver) external returns (uint256 shares);
     function asset() external view returns (address);
@@ -43,7 +43,7 @@ interface DaiUsdsLike {
     function dai() external view returns (address);
 }
 
-interface LitePSMLike {
+interface LitePsmLike {
     function sellGem(address usr, uint256 gemAmt) external returns (uint256 daiAmt);
     function buyGem(address usr, uint256 gemAmt) external returns (uint256 gemBought);
     function dai() external view returns (address);
@@ -97,13 +97,13 @@ contract SusdsGem {
         LITE_PSM = _LITE_PSM;
 
         // Get USDS from sUSDS
-        USDS = SUSDSLike(_sUSDS).asset();
+        USDS = ERC4626Like(_sUSDS).asset();
 
         // Get DAI from LitePSM
-        DAI = LitePSMLike(_LITE_PSM).dai();
+        DAI = LitePsmLike(_LITE_PSM).dai();
 
         // Get gem from LitePSM
-        GEM = LitePSMLike(_LITE_PSM).gem();
+        GEM = LitePsmLike(_LITE_PSM).gem();
 
         // Sanity check: USDS address from sUSDS must match USDS address from DAI_USDS
         require(USDS == DaiUsdsLike(_DAI_USDS).usds(), "SusdsGem/usds-mismatch");
@@ -112,7 +112,7 @@ contract SusdsGem {
         require(DAI == DaiUsdsLike(_DAI_USDS).dai(), "SusdsGem/dai-mismatch");
 
         // Get conversion factor for DAI to gem precision conversion
-        CONVERSION_FACTOR = LitePSMLike(_LITE_PSM).to18ConversionFactor();
+        CONVERSION_FACTOR = LitePsmLike(_LITE_PSM).to18ConversionFactor();
 
         ERC20Like(USDS).approve(_DAI_USDS, type(uint256).max);
         ERC20Like(DAI).approve(_LITE_PSM, type(uint256).max);
@@ -177,7 +177,7 @@ contract SusdsGem {
         require(maxSlippageBps <= BPS, "SusdsGem/slippage-too-high");
 
         // Since the user already approved this contract, we can redeem directly
-        uint256 usdsWad = SUSDSLike(SUSDS).redeem(sUsdsWad, address(this), msg.sender);
+        uint256 usdsWad = ERC4626Like(SUSDS).redeem(sUsdsWad, address(this), msg.sender);
         require(usdsWad > 0, "SusdsGem/redeem-failed");
 
         // DAI-USDS conversion is always 1:1
@@ -189,7 +189,7 @@ contract SusdsGem {
         require(gemAmt > 0, "SusdsGem/amount-too-small");
 
         // Buy gems directly to the dst address
-        uint256 daiUsed = LitePSMLike(LITE_PSM).buyGem(dst, gemAmt);
+        uint256 daiUsed = LitePsmLike(LITE_PSM).buyGem(dst, gemAmt);
 
         // Check slippage - daiUsed should be approximately equal to usdsWad
         // Note: Since DAI-USDS conversion is always 1:1, we treat DAI amounts as USDS for user-facing messages
@@ -259,14 +259,14 @@ contract SusdsGem {
 
         _ensureDaiLiquidity(minDai);
 
-        uint256 daiReceived = LitePSMLike(LITE_PSM).sellGem(address(this), gemAmt);
+        uint256 daiReceived = LitePsmLike(LITE_PSM).sellGem(address(this), gemAmt);
         require(daiReceived >= minDai, "SusdsGem/insufficient-usds");
 
         // DAI-USDS conversion is always 1:1
         DaiUsdsLike(DAI_USDS).daiToUsds(address(this), daiReceived);
 
         // Deposit USDS to get sUSDS shares directly to dst (daiReceived == usdsWad due to 1:1)
-        susdsWad = SUSDSLike(SUSDS).deposit(daiReceived, dst);
+        susdsWad = ERC4626Like(SUSDS).deposit(daiReceived, dst);
         require(susdsWad > 0, "SusdsGem/deposit-failed");
     }
 
@@ -290,11 +290,11 @@ contract SusdsGem {
         if (balance < minDai) {
             // Check if filling the buffer will provide enough liquidity
             // rush() returns the amount of DAI that can be minted
-            uint256 rush = LitePSMLike(LITE_PSM).rush();
+            uint256 rush = LitePsmLike(LITE_PSM).rush();
             require(minDai <= balance + rush, "SusdsGem/insufficient-liquidity");
 
             // Fill the buffer by minting DAI into the PSM
-            LitePSMLike(LITE_PSM).fill();
+            LitePsmLike(LITE_PSM).fill();
         }
     }
 }

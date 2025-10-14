@@ -2,28 +2,24 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "./SusdsGem.sol";
+import {SusdsGem} from "./SusdsGem.sol";
 
-interface IChangelog {
+interface ChainlogLike {
     function getAddress(bytes32) external view returns (address);
 }
 
-interface IERC20 {
+interface ERC20Like {
     function balanceOf(address) external view returns (uint256);
     function approve(address, uint256) external returns (bool);
     function transfer(address, uint256) external returns (bool);
     function decimals() external view returns (uint8);
 }
 
-interface ISUSDS {
+interface ERC4626Like {
     function convertToAssets(uint256 shares) external view returns (uint256 assets);
 }
 
-interface IDeal {
-    function deal(address, address, uint256) external;
-}
-
-interface ILitePSM {
+interface LitePsmLike {
     function rush() external view returns (uint256);
     function fill() external returns (uint256);
     function buf() external view returns (uint256);
@@ -36,19 +32,10 @@ interface ILitePSM {
     function wards(address) external view returns (uint256);
 }
 
-interface IVat {
-    function ilks(bytes32)
-        external
-        view
-        returns (uint256 Art, uint256 rate, uint256 spot, uint256 line, uint256 dust);
-    function urns(bytes32, address) external view returns (uint256 ink, uint256 art);
-    function frob(bytes32, address, address, address, int256, int256) external;
-}
-
 contract SusdsGemTest is Test {
     SusdsGem public converter;
 
-    IChangelog constant changelog = IChangelog(0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F);
+    ChainlogLike constant chainlog = ChainlogLike(0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F);
 
     address public susds;
     address public daiUsds;
@@ -70,12 +57,12 @@ contract SusdsGemTest is Test {
 
         // Use known mainnet addresses directly
         // These are the current production addresses on Ethereum mainnet
-        susds = 0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD; // sUSDS
-        usds = 0xdC035D45d973E3EC169d2276DDab16f1e407384F; // USDS
-        dai = 0x6B175474E89094C44Da98b954EedeAC495271d0F; // DAI
-        usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // USDC
-        daiUsds = 0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A; // DAI-USDS converter
-        litePsmUsdc = 0xf6e72Db5454dd049d0788e411b06CfAF16853042; // LITE_PSM_USDC_A
+        susds = chainlog.getAddress("SUSDS"); // sUSDS
+        usds = chainlog.getAddress("USDS"); // USDS
+        dai = chainlog.getAddress("MCD_DAI"); // DAI
+        usdc = chainlog.getAddress("USDC"); // USDC
+        daiUsds = chainlog.getAddress("DAI_USDS"); // DAI-USDS converter
+        litePsmUsdc = chainlog.getAddress("MCD_LITE_PSM_USDC_A"); // LITE_PSM_USDC_A
 
         // Deploy converter with real addresses
         converter = new SusdsGem(susds, daiUsds, litePsmUsdc);
@@ -91,16 +78,16 @@ contract SusdsGemTest is Test {
         deal(usds, susds, 100_000_000e18); // Fund sUSDS vault with 100M USDS
 
         // Check if PSM needs filling and fill it if necessary
-        if (ILitePSM(litePsmUsdc).rush() > 0) {
+        if (LitePsmLike(litePsmUsdc).rush() > 0) {
             // PSM needs liquidity - fund it with USDC and call fill
             deal(usdc, litePsmUsdc, 100_000_000e6); // 100M USDC
-            ILitePSM(litePsmUsdc).fill();
+            LitePsmLike(litePsmUsdc).fill();
         }
 
         // User approves converter for both directions
         vm.startPrank(user);
-        IERC20(susds).approve(address(converter), type(uint256).max);
-        IERC20(usdc).approve(address(converter), type(uint256).max);
+        ERC20Like(susds).approve(address(converter), type(uint256).max);
+        ERC20Like(usdc).approve(address(converter), type(uint256).max);
         vm.stopPrank();
     }
 
@@ -118,14 +105,14 @@ contract SusdsGemTest is Test {
 
     function testSusdsToUsdcConversion() public {
         uint256 susdsWad = 100e18;
-        uint256 initialSusdsBalance = IERC20(susds).balanceOf(user);
-        uint256 initialUsdcBalance = IERC20(usdc).balanceOf(destination);
+        uint256 initialSusdsBalance = ERC20Like(susds).balanceOf(user);
+        uint256 initialUsdcBalance = ERC20Like(usdc).balanceOf(destination);
 
         vm.prank(user);
         uint256 usdcReceived = converter.susdsToGem(destination, susdsWad);
 
-        uint256 finalSusdsBalance = IERC20(susds).balanceOf(user);
-        uint256 finalUsdcBalance = IERC20(usdc).balanceOf(destination);
+        uint256 finalSusdsBalance = ERC20Like(susds).balanceOf(user);
+        uint256 finalUsdcBalance = ERC20Like(usdc).balanceOf(destination);
 
         // Check sUSDS was transferred from user
         assertEq(initialSusdsBalance - finalSusdsBalance, susdsWad, "Incorrect sUSDS amount transferred from user");
@@ -146,12 +133,12 @@ contract SusdsGemTest is Test {
         uint256 susdsWad = 100e18;
         uint256 maxSlippageBps = 100; // 1% slippage tolerance
 
-        uint256 initialUsdcBalance = IERC20(usdc).balanceOf(destination);
+        uint256 initialUsdcBalance = ERC20Like(usdc).balanceOf(destination);
 
         vm.prank(user);
         uint256 returnedAmount = converter.susdsToGem(destination, susdsWad, maxSlippageBps);
 
-        uint256 finalUsdcBalance = IERC20(usdc).balanceOf(destination);
+        uint256 finalUsdcBalance = ERC20Like(usdc).balanceOf(destination);
         uint256 usdcReceived = finalUsdcBalance - initialUsdcBalance;
 
         // Verify return value matches actual balance change
@@ -163,14 +150,14 @@ contract SusdsGemTest is Test {
     }
 
     function testAllSusdsToUsdc() public {
-        uint256 initialUsdcBalance = IERC20(usdc).balanceOf(destination);
+        uint256 initialUsdcBalance = ERC20Like(usdc).balanceOf(destination);
 
         vm.prank(user);
         uint256 usdcReceived = converter.allSusdsToGem(destination);
 
-        assertEq(IERC20(susds).balanceOf(user), 0, "User should have no sUSDS left after converting all");
+        assertEq(ERC20Like(susds).balanceOf(user), 0, "User should have no sUSDS left after converting all");
 
-        uint256 actualUsdcReceived = IERC20(usdc).balanceOf(destination) - initialUsdcBalance;
+        uint256 actualUsdcReceived = ERC20Like(usdc).balanceOf(destination) - initialUsdcBalance;
         assertEq(usdcReceived, actualUsdcReceived, "Return value doesn't match actual USDC received");
         assertGt(actualUsdcReceived, 0, "Destination should have received USDC");
     }
@@ -181,14 +168,14 @@ contract SusdsGemTest is Test {
         deal(susds, user, largeSusdsWad);
 
         vm.prank(user);
-        IERC20(susds).approve(address(converter), largeSusdsWad);
+        ERC20Like(susds).approve(address(converter), largeSusdsWad);
 
-        uint256 initialUsdcBalance = IERC20(usdc).balanceOf(destination);
+        uint256 initialUsdcBalance = ERC20Like(usdc).balanceOf(destination);
 
         vm.prank(user);
         converter.susdsToGem(destination, largeSusdsWad);
 
-        uint256 usdcReceived = IERC20(usdc).balanceOf(destination) - initialUsdcBalance;
+        uint256 usdcReceived = ERC20Like(usdc).balanceOf(destination) - initialUsdcBalance;
 
         // Should receive approximately 1M USDC (give or take for sUSDS appreciation)
         assertGt(usdcReceived, 990000e6, "Large conversion: USDC received below 990k minimum");
@@ -204,10 +191,10 @@ contract SusdsGemTest is Test {
         deal(susds, user3, 750e18);
 
         vm.prank(user2);
-        IERC20(susds).approve(address(converter), type(uint256).max);
+        ERC20Like(susds).approve(address(converter), type(uint256).max);
 
         vm.prank(user3);
-        IERC20(susds).approve(address(converter), type(uint256).max);
+        ERC20Like(susds).approve(address(converter), type(uint256).max);
 
         // User 2 converts
         vm.prank(user2);
@@ -218,8 +205,8 @@ contract SusdsGemTest is Test {
         converter.susdsToGem(user3, 750e18);
 
         // Check balances
-        assertGt(IERC20(usdc).balanceOf(user2), 499e6, "User2 should have received at least 499 USDC");
-        assertGt(IERC20(usdc).balanceOf(user3), 749e6, "User3 should have received at least 749 USDC");
+        assertGt(ERC20Like(usdc).balanceOf(user2), 499e6, "User2 should have received at least 499 USDC");
+        assertGt(ERC20Like(usdc).balanceOf(user3), 749e6, "User3 should have received at least 749 USDC");
     }
 
     function testRealSlippageProtection() public {
@@ -232,7 +219,7 @@ contract SusdsGemTest is Test {
 
         // Verify it worked
         assertGt(
-            IERC20(usdc).balanceOf(destination), 0, "Conversion should succeed with tight 0.01% slippage tolerance"
+            ERC20Like(usdc).balanceOf(destination), 0, "Conversion should succeed with tight 0.01% slippage tolerance"
         );
     }
 
@@ -242,13 +229,13 @@ contract SusdsGemTest is Test {
         deal(susds, user, smallAmount);
 
         vm.prank(user);
-        IERC20(susds).approve(address(converter), smallAmount);
+        ERC20Like(susds).approve(address(converter), smallAmount);
 
         vm.prank(user);
         converter.susdsToGem(destination, smallAmount);
 
         // Should receive at least 1 USDC unit (1e0 = 1 smallest unit)
-        assertGt(IERC20(usdc).balanceOf(destination), 0, "Small amount conversion should yield at least 1 USDC unit");
+        assertGt(ERC20Like(usdc).balanceOf(destination), 0, "Small amount conversion should yield at least 1 USDC unit");
     }
 
     function testGasUsage() public {
@@ -265,14 +252,14 @@ contract SusdsGemTest is Test {
 
     function testGemToSusdsConversion() public {
         uint256 usdcAmt = 100e6; // 100 USDC
-        uint256 initialUsdcBalance = IERC20(usdc).balanceOf(user);
-        uint256 initialSusdsBalance = IERC20(susds).balanceOf(destination);
+        uint256 initialUsdcBalance = ERC20Like(usdc).balanceOf(user);
+        uint256 initialSusdsBalance = ERC20Like(susds).balanceOf(destination);
 
         vm.prank(user);
         uint256 susdsReceived = converter.gemToSusds(destination, usdcAmt);
 
-        uint256 finalUsdcBalance = IERC20(usdc).balanceOf(user);
-        uint256 finalSusdsBalance = IERC20(susds).balanceOf(destination);
+        uint256 finalUsdcBalance = ERC20Like(usdc).balanceOf(user);
+        uint256 finalSusdsBalance = ERC20Like(susds).balanceOf(destination);
 
         // Check USDC was transferred from user
         assertEq(initialUsdcBalance - finalUsdcBalance, usdcAmt, "Incorrect USDC amount transferred from user");
@@ -290,12 +277,12 @@ contract SusdsGemTest is Test {
 
     function testGemToSusdsWithSlippage() public {
         uint256 usdcAmt = 100e6;
-        uint256 initialSusdsBalance = IERC20(susds).balanceOf(destination);
+        uint256 initialSusdsBalance = ERC20Like(susds).balanceOf(destination);
 
         vm.prank(user);
         uint256 returnedSusds = converter.gemToSusds(destination, usdcAmt, 100); // 1% slippage
 
-        uint256 susdsReceived = IERC20(susds).balanceOf(destination) - initialSusdsBalance;
+        uint256 susdsReceived = ERC20Like(susds).balanceOf(destination) - initialSusdsBalance;
 
         // Verify return value matches actual balance change
         assertEq(returnedSusds, susdsReceived, "Return value doesn't match actual sUSDS received");
@@ -306,14 +293,14 @@ contract SusdsGemTest is Test {
     }
 
     function testAllGemToSusds() public {
-        uint256 initialSusdsBalance = IERC20(susds).balanceOf(destination);
+        uint256 initialSusdsBalance = ERC20Like(susds).balanceOf(destination);
 
         vm.prank(user);
         uint256 susdsReceived = converter.allGemToSusds(destination);
 
-        assertEq(IERC20(usdc).balanceOf(user), 0, "User should have no USDC left");
+        assertEq(ERC20Like(usdc).balanceOf(user), 0, "User should have no USDC left");
 
-        uint256 actualSusdsReceived = IERC20(susds).balanceOf(destination) - initialSusdsBalance;
+        uint256 actualSusdsReceived = ERC20Like(susds).balanceOf(destination) - initialSusdsBalance;
         assertEq(susdsReceived, actualSusdsReceived, "Return value doesn't match actual sUSDS received");
         assertGt(actualSusdsReceived, 0, "Destination should have received sUSDS");
     }
@@ -321,13 +308,13 @@ contract SusdsGemTest is Test {
     function testRoundTripConversion() public {
         // First convert sUSDS to USDC
         uint256 susdsWad = 1000e18;
-        uint256 initialSusdsBalance = IERC20(susds).balanceOf(user);
-        uint256 initialUsdcBalance = IERC20(usdc).balanceOf(user);
+        uint256 initialSusdsBalance = ERC20Like(susds).balanceOf(user);
+        uint256 initialUsdcBalance = ERC20Like(usdc).balanceOf(user);
 
         vm.prank(user);
         uint256 usdcReceivedFromConversion = converter.susdsToGem(user, susdsWad); // Convert to self
 
-        uint256 midUsdcBalance = IERC20(usdc).balanceOf(user);
+        uint256 midUsdcBalance = ERC20Like(usdc).balanceOf(user);
         uint256 actualUsdcReceived = midUsdcBalance - initialUsdcBalance;
         assertEq(usdcReceivedFromConversion, actualUsdcReceived, "Return value doesn't match USDC received");
 
@@ -335,7 +322,7 @@ contract SusdsGemTest is Test {
         vm.prank(user);
         uint256 susdsReceivedBack = converter.gemToSusds(user, actualUsdcReceived);
 
-        uint256 finalSusdsBalance = IERC20(susds).balanceOf(user);
+        uint256 finalSusdsBalance = ERC20Like(susds).balanceOf(user);
 
         // Verify the return value matches the actual sUSDS received
         assertEq(
@@ -359,14 +346,14 @@ contract SusdsGemTest is Test {
         // Setup user with the fuzzed amount
         deal(susds, user, susdsAmount);
 
-        uint256 initialSusdsBalance = IERC20(susds).balanceOf(user);
-        uint256 initialGemBalance = IERC20(usdc).balanceOf(destination);
+        uint256 initialSusdsBalance = ERC20Like(susds).balanceOf(user);
+        uint256 initialGemBalance = ERC20Like(usdc).balanceOf(destination);
 
         vm.prank(user);
         uint256 gemReceived = converter.susdsToGem(destination, susdsAmount);
 
-        uint256 finalSusdsBalance = IERC20(susds).balanceOf(user);
-        uint256 finalGemBalance = IERC20(usdc).balanceOf(destination);
+        uint256 finalSusdsBalance = ERC20Like(susds).balanceOf(user);
+        uint256 finalGemBalance = ERC20Like(usdc).balanceOf(destination);
 
         // Verify sUSDS was transferred
         assertEq(initialSusdsBalance - finalSusdsBalance, susdsAmount, "Incorrect sUSDS transferred");
@@ -387,14 +374,14 @@ contract SusdsGemTest is Test {
         // Setup user with the fuzzed amount
         deal(usdc, user, gemAmount);
 
-        uint256 initialGemBalance = IERC20(usdc).balanceOf(user);
-        uint256 initialSusdsBalance = IERC20(susds).balanceOf(destination);
+        uint256 initialGemBalance = ERC20Like(usdc).balanceOf(user);
+        uint256 initialSusdsBalance = ERC20Like(susds).balanceOf(destination);
 
         vm.prank(user);
         uint256 susdsReceived = converter.gemToSusds(destination, gemAmount);
 
-        uint256 finalGemBalance = IERC20(usdc).balanceOf(user);
-        uint256 finalSusdsBalance = IERC20(susds).balanceOf(destination);
+        uint256 finalGemBalance = ERC20Like(usdc).balanceOf(user);
+        uint256 finalSusdsBalance = ERC20Like(susds).balanceOf(destination);
 
         // Verify gem was transferred
         assertEq(initialGemBalance - finalGemBalance, gemAmount, "Incorrect gem transferred");
@@ -436,7 +423,7 @@ contract SusdsGemTest is Test {
         startAmount = bound(startAmount, 100e18, 10_000e18);
 
         deal(susds, user, startAmount);
-        uint256 initialSusds = IERC20(susds).balanceOf(user);
+        uint256 initialSusds = ERC20Like(susds).balanceOf(user);
 
         // Convert sUSDS to gem
         vm.prank(user);
@@ -444,11 +431,11 @@ contract SusdsGemTest is Test {
 
         // Approve and convert gem back to sUSDS
         vm.startPrank(user);
-        IERC20(usdc).approve(address(converter), gemReceived);
+        ERC20Like(usdc).approve(address(converter), gemReceived);
         uint256 susdsRecovered = converter.gemToSusds(user, gemReceived);
         vm.stopPrank();
 
-        uint256 finalSusds = IERC20(susds).balanceOf(user);
+        uint256 finalSusds = ERC20Like(susds).balanceOf(user);
 
         // With 0 slippage, should recover almost all (only rounding losses, < 0.1%)
         assertGe(finalSusds, initialSusds * 999 / 1000, "Lost more than 0.1% in round trip");
@@ -465,23 +452,23 @@ contract SusdsGemTest is Test {
         address user1 = address(0x1001);
         deal(susds, user1, userSusds);
         vm.startPrank(user1);
-        IERC20(susds).approve(address(converter), type(uint256).max);
+        ERC20Like(susds).approve(address(converter), type(uint256).max);
         uint256 gemFromAll = converter.allSusdsToGem(user1);
         vm.stopPrank();
 
-        assertEq(IERC20(susds).balanceOf(user1), 0, "Should have no sUSDS left");
-        assertEq(IERC20(usdc).balanceOf(user1), gemFromAll, "Gem balance mismatch");
+        assertEq(ERC20Like(susds).balanceOf(user1), 0, "Should have no sUSDS left");
+        assertEq(ERC20Like(usdc).balanceOf(user1), gemFromAll, "Gem balance mismatch");
 
         // Test allGemToSusds
         address user2 = address(0x1002);
         deal(usdc, user2, userGem);
         vm.startPrank(user2);
-        IERC20(usdc).approve(address(converter), type(uint256).max);
+        ERC20Like(usdc).approve(address(converter), type(uint256).max);
         uint256 susdsFromAll = converter.allGemToSusds(user2);
         vm.stopPrank();
 
-        assertEq(IERC20(usdc).balanceOf(user2), 0, "Should have no gem left");
-        assertEq(IERC20(susds).balanceOf(user2), susdsFromAll, "sUSDS balance mismatch");
+        assertEq(ERC20Like(usdc).balanceOf(user2), 0, "Should have no gem left");
+        assertEq(ERC20Like(susds).balanceOf(user2), susdsFromAll, "sUSDS balance mismatch");
     }
 
     function testFuzzMinimumAmounts(uint256 tinyAmount) public {
@@ -492,14 +479,14 @@ contract SusdsGemTest is Test {
         // Calculate a sUSDS amount that will redeem to less than CONVERSION_FACTOR USDS
         // Account for sUSDS appreciation by using convertToAssets
         uint256 maxUsdsForTest = converter.CONVERSION_FACTOR() - 1; // Just under the limit
-        uint256 maxSusdsShares = maxUsdsForTest * 1e18 / (ISUSDS(susds).convertToAssets(1e18) + 1); // Conservative estimate
+        uint256 maxSusdsShares = maxUsdsForTest * 1e18 / (ERC4626Like(susds).convertToAssets(1e18) + 1); // Conservative estimate
 
         tinyAmount = bound(tinyAmount, 1, maxSusdsShares);
 
         deal(susds, user, tinyAmount);
 
         // Check if this amount would produce less than CONVERSION_FACTOR USDS
-        uint256 expectedUsds = ISUSDS(susds).convertToAssets(tinyAmount);
+        uint256 expectedUsds = ERC4626Like(susds).convertToAssets(tinyAmount);
 
         if (expectedUsds < converter.CONVERSION_FACTOR()) {
             // Should revert for amounts too small to convert
@@ -589,28 +576,28 @@ contract SusdsGemTest is Test {
     function testDaiFillWhenNeeded() public {
         // This test verifies that the converter calls fill() when the PSM lacks DAI but rush is available
 
-        address pocket = ILitePSM(litePsmUsdc).pocket();
+        address pocket = LitePsmLike(litePsmUsdc).pocket();
 
         // First, create rush by adding gems to the pocket
         // This increases target debt (tArt = gem.balanceOf(pocket) * to18ConversionFactor + buf)
-        uint256 currentGemInPocket = IERC20(usdc).balanceOf(pocket);
+        uint256 currentGemInPocket = ERC20Like(usdc).balanceOf(pocket);
         deal(usdc, pocket, currentGemInPocket + 10_000_000e6); // Add 10M USDC to pocket
 
         // Verify we now have rush
-        uint256 rushBefore = ILitePSM(litePsmUsdc).rush();
+        uint256 rushBefore = LitePsmLike(litePsmUsdc).rush();
         assertGt(rushBefore, 1000e18, "Should have created significant rush availability");
 
         // Drain PSM's DAI balance to force buffer filling
-        uint256 psmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        uint256 psmDaiBalance = ERC20Like(dai).balanceOf(litePsmUsdc);
         vm.prank(litePsmUsdc);
-        IERC20(dai).transfer(address(0x999), psmDaiBalance);
+        ERC20Like(dai).transfer(address(0x999), psmDaiBalance);
 
         // Verify PSM has no DAI
-        assertEq(IERC20(dai).balanceOf(litePsmUsdc), 0, "PSM should have no DAI");
+        assertEq(ERC20Like(dai).balanceOf(litePsmUsdc), 0, "PSM should have no DAI");
 
         // Now try to convert - should trigger fill
         uint256 usdcAmt = 100e6;
-        uint256 initialDestBalance = IERC20(susds).balanceOf(destination);
+        uint256 initialDestBalance = ERC20Like(susds).balanceOf(destination);
 
         vm.prank(user);
         uint256 susdsReceived = converter.gemToSusds(destination, usdcAmt);
@@ -618,34 +605,34 @@ contract SusdsGemTest is Test {
         // Verify conversion succeeded
         assertGt(susdsReceived, 0, "Should have received sUSDS after buffer fill");
         assertEq(
-            IERC20(susds).balanceOf(destination) - initialDestBalance,
+            ERC20Like(susds).balanceOf(destination) - initialDestBalance,
             susdsReceived,
             "Balance change should match return"
         );
 
         // Verify buffer was filled
-        uint256 finalPsmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        uint256 finalPsmDaiBalance = ERC20Like(dai).balanceOf(litePsmUsdc);
         assertGt(finalPsmDaiBalance, 0, "PSM should have DAI after fill");
 
         // Verify rush decreased
-        uint256 rushAfter = ILitePSM(litePsmUsdc).rush();
+        uint256 rushAfter = LitePsmLike(litePsmUsdc).rush();
         assertLt(rushAfter, rushBefore, "Rush should have decreased after fill");
     }
 
     function testRevertDaiFillWhenInsufficientLiquidity() public {
         // Drain PSM DAI balance
-        uint256 psmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        uint256 psmDaiBalance = ERC20Like(dai).balanceOf(litePsmUsdc);
         vm.prank(litePsmUsdc);
-        IERC20(dai).transfer(address(0x999), psmDaiBalance);
+        ERC20Like(dai).transfer(address(0x999), psmDaiBalance);
 
         // Drain rush by removing USDC from pocket (pocket holds gems, not DAI)
-        address pocket = ILitePSM(litePsmUsdc).pocket();
-        uint256 pocketUsdcBalance = IERC20(usdc).balanceOf(pocket);
+        address pocket = LitePsmLike(litePsmUsdc).pocket();
+        uint256 pocketUsdcBalance = ERC20Like(usdc).balanceOf(pocket);
         vm.prank(pocket);
-        IERC20(usdc).transfer(address(0x999), pocketUsdcBalance);
+        ERC20Like(usdc).transfer(address(0x999), pocketUsdcBalance);
 
         // Verify rush is now 0 (no USDC in pocket means no ability to mint DAI)
-        uint256 rushAvailable = ILitePSM(litePsmUsdc).rush();
+        uint256 rushAvailable = LitePsmLike(litePsmUsdc).rush();
         assertEq(rushAvailable, 0, "Rush should be 0 after draining pocket USDC");
 
         // Now try conversion - should fail due to insufficient rush
@@ -661,7 +648,7 @@ contract SusdsGemTest is Test {
         deal(dai, litePsmUsdc, 10_000_000e18);
 
         // Record initial state
-        uint256 initialPsmDai = IERC20(dai).balanceOf(litePsmUsdc);
+        uint256 initialPsmDai = ERC20Like(dai).balanceOf(litePsmUsdc);
 
         // Small conversion that doesn't need fill
         uint256 usdcAmt = 100e6;
@@ -669,7 +656,7 @@ contract SusdsGemTest is Test {
         converter.gemToSusds(destination, usdcAmt);
 
         // PSM balance should have decreased by roughly the amount used
-        uint256 finalPsmDai = IERC20(dai).balanceOf(litePsmUsdc);
+        uint256 finalPsmDai = ERC20Like(dai).balanceOf(litePsmUsdc);
         assertApproxEqAbs(
             finalPsmDai, initialPsmDai - usdcAmt * 1e12, converter.CONVERSION_FACTOR(), "PSM DAI should decrease"
         );
@@ -680,15 +667,15 @@ contract SusdsGemTest is Test {
         // the buffer check correctly accounts for the reduced DAI needed
 
         address pauseProxy = 0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB;
-        address pocket = ILitePSM(litePsmUsdc).pocket();
+        address pocket = LitePsmLike(litePsmUsdc).pocket();
 
         // Set tin to 2% (0.02 * 1e18)
         uint256 tinFee = 0.02e18;
         vm.prank(pauseProxy);
-        ILitePSM(litePsmUsdc).file(bytes32("tin"), tinFee);
+        LitePsmLike(litePsmUsdc).file(bytes32("tin"), tinFee);
 
         // Verify tin was set
-        assertEq(ILitePSM(litePsmUsdc).tin(), tinFee, "tin should be set to 2%");
+        assertEq(LitePsmLike(litePsmUsdc).tin(), tinFee, "tin should be set to 2%");
 
         // For 1000 USDC with 2% tin fee:
         // - User sells 1000 USDC
@@ -699,20 +686,20 @@ contract SusdsGemTest is Test {
         uint256 minDaiNeeded = usdcAmt * 1e12 * (10000 - slippageBps) / 10000; // 980e18
 
         // Create rush by adding gems to pocket
-        uint256 currentGemInPocket = IERC20(usdc).balanceOf(pocket);
+        uint256 currentGemInPocket = ERC20Like(usdc).balanceOf(pocket);
         deal(usdc, pocket, currentGemInPocket + 2_000_000e6); // Add 2M USDC
 
         // Verify we have enough rush
-        uint256 rushAvailable = ILitePSM(litePsmUsdc).rush();
+        uint256 rushAvailable = LitePsmLike(litePsmUsdc).rush();
         assertGt(rushAvailable, minDaiNeeded, "Should have enough rush for swap with fee");
 
         // Drain PSM's DAI balance to force buffer filling
-        uint256 psmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        uint256 psmDaiBalance = ERC20Like(dai).balanceOf(litePsmUsdc);
         vm.prank(litePsmUsdc);
-        IERC20(dai).transfer(address(0x999), psmDaiBalance);
+        ERC20Like(dai).transfer(address(0x999), psmDaiBalance);
 
         // Verify PSM has no DAI
-        assertEq(IERC20(dai).balanceOf(litePsmUsdc), 0, "PSM should have no DAI");
+        assertEq(ERC20Like(dai).balanceOf(litePsmUsdc), 0, "PSM should have no DAI");
 
         // Convert with slippage tolerance - should succeed because buffer check accounts for the fee
         vm.prank(user);
@@ -722,13 +709,13 @@ contract SusdsGemTest is Test {
         assertGt(susdsReceived, 0, "Should have received sUSDS");
 
         // The buffer should have been filled with at least minDaiNeeded (980 DAI)
-        uint256 finalPsmDaiBalance = IERC20(dai).balanceOf(litePsmUsdc);
+        uint256 finalPsmDaiBalance = ERC20Like(dai).balanceOf(litePsmUsdc);
         assertGe(finalPsmDaiBalance, minDaiNeeded, "PSM should have enough DAI for swap with fee");
 
         // Verify the actual USDS/DAI value underlying the sUSDS received is exactly 980 DAI
         // With 2% tin fee, selling 1000 USDC yields exactly 980 DAI
         uint256 expectedDaiReceived = usdcAmt * 1e12 * (1e18 - tinFee) / 1e18; // 980e18
-        uint256 actualUsdsValue = ISUSDS(susds).convertToAssets(susdsReceived);
+        uint256 actualUsdsValue = ERC4626Like(susds).convertToAssets(susdsReceived);
         // Allow for 1 gwei rounding difference due to sUSDS share conversion
         assertApproxEqAbs(
             actualUsdsValue,
