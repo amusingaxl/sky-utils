@@ -92,12 +92,12 @@ contract SusdsGemTest is Test {
     }
 
     function testConstructorWithRealAddresses() public view {
-        assertEq(converter.susds(), susds, "SUSDS address mismatch");
-        assertEq(converter.daiUsds(), daiUsds, "DAI_USDS address mismatch");
-        assertEq(converter.litePsm(), litePsmUsdc, "LITE_PSM address mismatch");
-        assertEq(converter.usds(), usds, "USDS address mismatch");
-        assertEq(converter.dai(), dai, "DAI address mismatch");
-        assertEq(converter.gem(), usdc, "GEM (USDC) address mismatch");
+        assertEq(address(converter.susds()), susds, "SUSDS address mismatch");
+        assertEq(address(converter.daiUsds()), daiUsds, "DAI_USDS address mismatch");
+        assertEq(address(converter.litePsm()), litePsmUsdc, "LITE_PSM address mismatch");
+        assertEq(address(converter.usds()), usds, "USDS address mismatch");
+        assertEq(address(converter.dai()), dai, "DAI address mismatch");
+        assertEq(address(converter.gem()), usdc, "GEM (USDC) address mismatch");
 
         // USDC has 6 decimals, so conversion factor should be 1e12
         assertEq(converter.CONVERSION_FACTOR(), 1e12, "Incorrect conversion factor for USDC (6 decimals)");

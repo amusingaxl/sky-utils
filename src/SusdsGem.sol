@@ -23,63 +23,28 @@ pragma solidity ^0.8.24;
  *      appears as sUSDS <-> USDS <-> GEM. Error messages reference USDS instead of DAI
  *      to simplify the mental model for users.
  */
-interface ERC20Like {
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-}
-
-interface ERC4626Like {
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
-    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
-    function asset() external view returns (address);
-}
-
-interface DaiUsdsLike {
-    function daiToUsds(address usr, uint256 wad) external;
-    function usdsToDai(address usr, uint256 wad) external;
-    function usds() external view returns (address);
-    function dai() external view returns (address);
-}
-
-interface LitePsmLike {
-    function sellGem(address usr, uint256 gemAmt) external returns (uint256 daiAmt);
-    function buyGem(address usr, uint256 gemAmt) external returns (uint256 gemBought);
-    function dai() external view returns (address);
-    function gem() external view returns (address);
-    function to18ConversionFactor() external view returns (uint256);
-    function rush() external view returns (uint256 wad);
-    function fill() external returns (uint256 wad);
-    function buf() external view returns (uint256);
-}
-
-/**
- * @title SusdsGem
- * @notice Non-custodial converter for atomic sUSDS <-> GEM swaps
- * @dev All state variables are immutable for gas efficiency and security
- */
 contract SusdsGem {
-    /// @notice sUSDS token contract address
-    address public immutable susds;
+    /// @notice sUSDS token contract
+    ERC4626Like public immutable susds;
 
-    /// @notice DAI-USDS converter contract address
-    address public immutable daiUsds;
+    /// @notice DAI-USDS converter contract
+    DaiUsdsLike public immutable daiUsds;
 
-    /// @notice LitePSM contract address for GEM swaps
-    address public immutable litePsm;
+    /// @notice LitePSM contract for GEM swaps
+    LitePsmLike public immutable litePsm;
 
-    /// @notice USDS token address (derived from sUSDS)
-    address public immutable usds;
+    /// @notice USDS token (derived from sUSDS)
+    ERC20Like public immutable usds;
 
-    /// @notice DAI token address (derived from LitePSM)
-    address public immutable dai;
+    /// @notice DAI token (derived from LitePSM)
+    ERC20Like public immutable dai;
 
-    /// @notice GEM token address (e.g., USDC, derived from LitePSM)
-    address public immutable gem;
+    /// @notice GEM token (e.g., USDC, derived from LitePSM)
+    ERC20Like public immutable gem;
 
     /// @notice Conversion factor for decimal precision adjustment between DAI (18 decimals) and GEM
     uint256 public immutable CONVERSION_FACTOR;
+
     /// @notice Basis points constant for percentage calculations (100.00%)
     uint256 private constant BPS = 100_00;
 
@@ -91,33 +56,33 @@ contract SusdsGem {
      * @param _litePsm Address of the LitePSM contract for the target GEM
      */
     constructor(address _susds, address _daiUsds, address _litePsm) {
-        susds = _susds;
-        daiUsds = _daiUsds;
-        litePsm = _litePsm;
+        susds = ERC4626Like(_susds);
+        daiUsds = DaiUsdsLike(_daiUsds);
+        litePsm = LitePsmLike(_litePsm);
 
         // Get USDS from sUSDS
-        usds = ERC4626Like(_susds).asset();
+        usds = ERC20Like(susds.asset());
 
         // Get DAI from LitePSM
-        dai = LitePsmLike(_litePsm).dai();
+        dai = ERC20Like(litePsm.dai());
 
         // Get gem from LitePSM
-        gem = LitePsmLike(_litePsm).gem();
+        gem = ERC20Like(litePsm.gem());
 
         // Sanity check: USDS address from sUSDS must match USDS address from daiUsds
-        require(usds == DaiUsdsLike(_daiUsds).usds(), "SusdsGem/usds-mismatch");
+        require(address(usds) == daiUsds.usds(), "SusdsGem/usds-mismatch");
 
         // Sanity check: DAI address from daiUsds must match DAI address from LitePSM
-        require(dai == DaiUsdsLike(_daiUsds).dai(), "SusdsGem/dai-mismatch");
+        require(address(dai) == daiUsds.dai(), "SusdsGem/dai-mismatch");
 
         // Get conversion factor for DAI to gem precision conversion
-        CONVERSION_FACTOR = LitePsmLike(_litePsm).to18ConversionFactor();
+        CONVERSION_FACTOR = litePsm.to18ConversionFactor();
 
-        ERC20Like(usds).approve(_daiUsds, type(uint256).max);
-        ERC20Like(usds).approve(_susds, type(uint256).max);
-        ERC20Like(dai).approve(_litePsm, type(uint256).max);
-        ERC20Like(dai).approve(_daiUsds, type(uint256).max);
-        ERC20Like(gem).approve(_litePsm, type(uint256).max);
+        usds.approve(_daiUsds, type(uint256).max);
+        usds.approve(_susds, type(uint256).max);
+        dai.approve(_litePsm, type(uint256).max);
+        dai.approve(_daiUsds, type(uint256).max);
+        gem.approve(_litePsm, type(uint256).max);
     }
 
     /**
@@ -148,7 +113,7 @@ contract SusdsGem {
      * @return gemAmt Amount of GEM tokens sent to destination
      */
     function allSusdsToGem(address dst) external returns (uint256 gemAmt) {
-        uint256 sUsdsBalance = ERC20Like(susds).balanceOf(msg.sender);
+        uint256 sUsdsBalance = susds.balanceOf(msg.sender);
         require(sUsdsBalance > 0, "SusdsGem/no-susds-balance");
         return _susdsToGem(dst, sUsdsBalance, 0);
     }
@@ -160,7 +125,7 @@ contract SusdsGem {
      * @return gemAmt Amount of GEM tokens sent to destination
      */
     function allSusdsToGem(address dst, uint256 maxSlippageBps) external returns (uint256 gemAmt) {
-        uint256 sUsdsBalance = ERC20Like(susds).balanceOf(msg.sender);
+        uint256 sUsdsBalance = susds.balanceOf(msg.sender);
         require(sUsdsBalance > 0, "SusdsGem/no-susds-balance");
         return _susdsToGem(dst, sUsdsBalance, maxSlippageBps);
     }
@@ -176,11 +141,11 @@ contract SusdsGem {
         require(maxSlippageBps <= BPS, "SusdsGem/slippage-too-high");
 
         // Since the user already approved this contract, we can redeem directly
-        uint256 usdsWad = ERC4626Like(susds).redeem(sUsdsWad, address(this), msg.sender);
+        uint256 usdsWad = susds.redeem(sUsdsWad, address(this), msg.sender);
         require(usdsWad > 0, "SusdsGem/redeem-failed");
 
         // DAI-USDS conversion is always 1:1
-        DaiUsdsLike(daiUsds).usdsToDai(address(this), usdsWad);
+        daiUsds.usdsToDai(address(this), usdsWad);
 
         // buyGem expects amount in gem precision
         // Use CONVERSION_FACTOR to convert from DAI (18 decimals) to gem precision
@@ -188,7 +153,7 @@ contract SusdsGem {
         require(gemAmt > 0, "SusdsGem/amount-too-small");
 
         // Buy gems directly to the dst address
-        uint256 daiUsed = LitePsmLike(litePsm).buyGem(dst, gemAmt);
+        uint256 daiUsed = litePsm.buyGem(dst, gemAmt);
 
         // Check slippage - daiUsed should be approximately equal to usdsWad
         // Note: Since DAI-USDS conversion is always 1:1, we treat DAI amounts as USDS for user-facing messages
@@ -223,7 +188,7 @@ contract SusdsGem {
      * @return susdsWad Amount of sUSDS tokens sent to destination
      */
     function allGemToSusds(address dst) external returns (uint256 susdsWad) {
-        uint256 gemBalance = ERC20Like(gem).balanceOf(msg.sender);
+        uint256 gemBalance = gem.balanceOf(msg.sender);
         require(gemBalance > 0, "SusdsGem/no-gem-balance");
         return _gemToSusds(dst, gemBalance, 0);
     }
@@ -235,7 +200,7 @@ contract SusdsGem {
      * @return susdsWad Amount of sUSDS tokens sent to destination
      */
     function allGemToSusds(address dst, uint256 maxSlippageBps) external returns (uint256 susdsWad) {
-        uint256 gemBalance = ERC20Like(gem).balanceOf(msg.sender);
+        uint256 gemBalance = gem.balanceOf(msg.sender);
         require(gemBalance > 0, "SusdsGem/no-gem-balance");
         return _gemToSusds(dst, gemBalance, maxSlippageBps);
     }
@@ -250,7 +215,7 @@ contract SusdsGem {
     function _gemToSusds(address dst, uint256 gemAmt, uint256 maxSlippageBps) internal returns (uint256 susdsWad) {
         require(maxSlippageBps <= BPS, "SusdsGem/slippage-too-high");
 
-        ERC20Like(gem).transferFrom(msg.sender, address(this), gemAmt);
+        gem.transferFrom(msg.sender, address(this), gemAmt);
 
         // Note: Since DAI-USDS conversion is always 1:1, we treat DAI amounts as USDS for user-facing messages
         uint256 minDai = gemAmt * CONVERSION_FACTOR * (BPS - maxSlippageBps) / BPS;
@@ -258,14 +223,14 @@ contract SusdsGem {
 
         _ensureDaiLiquidity(minDai);
 
-        uint256 daiReceived = LitePsmLike(litePsm).sellGem(address(this), gemAmt);
+        uint256 daiReceived = litePsm.sellGem(address(this), gemAmt);
         require(daiReceived >= minDai, "SusdsGem/insufficient-usds");
 
         // DAI-USDS conversion is always 1:1
-        DaiUsdsLike(daiUsds).daiToUsds(address(this), daiReceived);
+        daiUsds.daiToUsds(address(this), daiReceived);
 
         // Deposit USDS to get sUSDS shares directly to dst (daiReceived == usdsWad due to 1:1)
-        susdsWad = ERC4626Like(susds).deposit(daiReceived, dst);
+        susdsWad = susds.deposit(daiReceived, dst);
         require(susdsWad > 0, "SusdsGem/deposit-failed");
     }
 
@@ -284,16 +249,48 @@ contract SusdsGem {
      */
     function _ensureDaiLiquidity(uint256 minDai) internal {
         // Check if there's enough DAI balance in the LitePSM for the swap
-        uint256 balance = ERC20Like(dai).balanceOf(litePsm);
+        uint256 balance = dai.balanceOf(address(litePsm));
 
         if (balance < minDai) {
             // Check if filling the buffer will provide enough liquidity
             // rush() returns the amount of DAI that can be minted
-            uint256 rush = LitePsmLike(litePsm).rush();
+            uint256 rush = litePsm.rush();
             require(minDai <= balance + rush, "SusdsGem/insufficient-liquidity");
 
             // Fill the buffer by minting DAI into the PSM
-            LitePsmLike(litePsm).fill();
+            litePsm.fill();
         }
     }
+}
+
+interface ERC20Like {
+    function approve(address spender, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+interface ERC4626Like {
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
+    function asset() external view returns (address);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+interface DaiUsdsLike {
+    function daiToUsds(address usr, uint256 wad) external;
+    function usdsToDai(address usr, uint256 wad) external;
+    function usds() external view returns (address);
+    function dai() external view returns (address);
+}
+
+interface LitePsmLike {
+    function sellGem(address usr, uint256 gemAmt) external returns (uint256 daiAmt);
+    function buyGem(address usr, uint256 gemAmt) external returns (uint256 gemBought);
+    function dai() external view returns (address);
+    function gem() external view returns (address);
+    function to18ConversionFactor() external view returns (uint256);
+    function rush() external view returns (uint256 wad);
+    function fill() external returns (uint256 wad);
+    function buf() external view returns (uint256);
 }
