@@ -61,7 +61,7 @@ contract SusdsGemTest is Test {
         usds = chainlog.getAddress("USDS"); // USDS
         dai = chainlog.getAddress("MCD_DAI"); // DAI
         usdc = chainlog.getAddress("USDC"); // USDC
-        daiUsds = chainlog.getAddress("DAI_USDS"); // DAI-USDS converter
+        daiUsds = chainlog.getAddress("DAI_USDS"); // DAI-usds converter
         litePsmUsdc = chainlog.getAddress("MCD_LITE_PSM_USDC_A"); // LITE_PSM_USDC_A
 
         // Deploy converter with real addresses
@@ -75,7 +75,7 @@ contract SusdsGemTest is Test {
 
         // IMPORTANT: The sUSDS contract needs underlying USDS to back the shares
         // When we deal sUSDS shares, we also need to ensure the vault has assets
-        deal(usds, susds, 100_000_000e18); // Fund sUSDS vault with 100M USDS
+        deal(usds, susds, 100_000_000e18); // Fund sUSDS vault with 100M usds
 
         // Check if PSM needs filling and fill it if necessary
         if (LitePsmLike(litePsmUsdc).rush() > 0) {
@@ -92,12 +92,12 @@ contract SusdsGemTest is Test {
     }
 
     function testConstructorWithRealAddresses() public view {
-        assertEq(converter.SUSDS(), susds, "SUSDS address mismatch");
-        assertEq(converter.DAI_USDS(), daiUsds, "DAI_USDS address mismatch");
-        assertEq(converter.LITE_PSM(), litePsmUsdc, "LITE_PSM address mismatch");
-        assertEq(converter.USDS(), usds, "USDS address mismatch");
-        assertEq(converter.DAI(), dai, "DAI address mismatch");
-        assertEq(converter.GEM(), usdc, "GEM (USDC) address mismatch");
+        assertEq(converter.susds(), susds, "SUSDS address mismatch");
+        assertEq(converter.daiUsds(), daiUsds, "DAI_USDS address mismatch");
+        assertEq(converter.litePsm(), litePsmUsdc, "LITE_PSM address mismatch");
+        assertEq(converter.usds(), usds, "USDS address mismatch");
+        assertEq(converter.dai(), dai, "DAI address mismatch");
+        assertEq(converter.gem(), usdc, "GEM (USDC) address mismatch");
 
         // USDC has 6 decimals, so conversion factor should be 1e12
         assertEq(converter.CONVERSION_FACTOR(), 1e12, "Incorrect conversion factor for USDC (6 decimals)");
