@@ -52,8 +52,7 @@ contract SusdsGemTest is Test {
 
     function setUp() public {
         // Fork mainnet
-        string memory rpcUrl = vm.envOr("ETH_RPC_URL", string("https://eth.public-rpc.com"));
-        vm.createSelectFork(rpcUrl, FORK_BLOCK);
+        vm.createSelectFork("mainnet");
 
         // Use known mainnet addresses directly
         // These are the current production addresses on Ethereum mainnet
@@ -413,7 +412,7 @@ contract SusdsGemTest is Test {
             uint256 gemReceived = converter.susdsToGem(destination, susdsAmount, slippageBps);
 
             // Verify we got at least the minimum expected after slippage
-            uint256 expectedMin = (susdsAmount / converter.CONVERSION_FACTOR()) * (10000 - slippageBps) / 10000;
+            uint256 expectedMin = susdsAmount * (100_00 - slippageBps) / (100_00 * converter.CONVERSION_FACTOR());
             assertGe(gemReceived, expectedMin * 98 / 100, "Received less than minimum after slippage");
         }
     }
