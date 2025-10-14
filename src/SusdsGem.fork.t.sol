@@ -4,34 +4,6 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import {SusdsGem} from "./SusdsGem.sol";
 
-interface ChainlogLike {
-    function getAddress(bytes32) external view returns (address);
-}
-
-interface ERC20Like {
-    function balanceOf(address) external view returns (uint256);
-    function approve(address, uint256) external returns (bool);
-    function transfer(address, uint256) external returns (bool);
-    function decimals() external view returns (uint8);
-}
-
-interface ERC4626Like {
-    function convertToAssets(uint256 shares) external view returns (uint256 assets);
-}
-
-interface LitePsmLike {
-    function rush() external view returns (uint256);
-    function fill() external returns (uint256);
-    function buf() external view returns (uint256);
-    function pocket() external view returns (address);
-    function vat() external view returns (address);
-    function ilk() external view returns (bytes32);
-    function trim() external returns (uint256);
-    function tin() external view returns (uint256);
-    function file(bytes32, uint256) external;
-    function wards(address) external view returns (uint256);
-}
-
 contract SusdsGemTest is Test {
     SusdsGem public converter;
 
@@ -723,4 +695,32 @@ contract SusdsGemTest is Test {
             "sUSDS shares should convert to exactly 980 USDS/DAI assets after tin fee"
         );
     }
+}
+
+interface ChainlogLike {
+    function getAddress(bytes32) external view returns (address);
+}
+
+interface ERC20Like {
+    function balanceOf(address) external view returns (uint256);
+    function approve(address, uint256) external returns (bool);
+    function transfer(address, uint256) external returns (bool);
+    function decimals() external view returns (uint8);
+}
+
+interface ERC4626Like {
+    function convertToAssets(uint256 shares) external view returns (uint256 assets);
+}
+
+interface LitePsmLike {
+    function rush() external view returns (uint256);
+    function fill() external returns (uint256);
+    function buf() external view returns (uint256);
+    function pocket() external view returns (address);
+    function vat() external view returns (address);
+    function ilk() external view returns (bytes32);
+    function trim() external returns (uint256);
+    function tin() external view returns (uint256);
+    function file(bytes32, uint256) external;
+    function wards(address) external view returns (uint256);
 }
