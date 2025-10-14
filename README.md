@@ -8,11 +8,57 @@
 
 ## Overview
 
-Sky Utils provides smart contracts for interacting with the Sky Protocol.
+Sky Utils provides smart contracts for interacting with the Sky Protocol, enabling seamless token conversions within the Sky ecosystem.
+
+### Available Contracts
+
+| Contract | Description | Gas Usage |
+|----------|-------------|-----------|
+| **SusdsGem** | Convert sUSDS ↔ USDC through Sky Protocol's LitePSM | ~400k gas |
+| **SusdsStusds** | Convert sUSDS ↔ stUSDS through direct vault operations | ~250k gas |
 
 ## SusdsGem
 
-This contract enables seamless bidirectional conversion between sUSDS (Savings USDS) tokens and USDC through the Sky Plotocol's conversion mechanisms.
+This contract enables seamless bidirectional conversion between sUSDS (Savings USDS) tokens and USDC through the Sky Protocol's conversion mechanisms.
+
+**Features:** 🔄 Bidirectional conversion • 🛡️ Slippage protection • ⚡ Gas-efficient • 🔒 Non-custodial
+
+**Gas Usage:** ~400k gas per conversion
+
+### Interface
+
+```solidity
+interface ISusdsGem {
+    // Convert specific amount with no slippage tolerance
+    function susdsToGem(address destination, uint256 sUsdsWad) external;
+
+    // Convert with custom slippage tolerance (in basis points)
+    function susdsToGem(address destination, uint256 sUsdsWad, uint256 maxSlippageBps) external;
+
+    // Convert entire sUSDS balance
+    function allSusdsToGem(address destination) external;
+
+    // Convert all with slippage tolerance
+    function allSusdsToGem(address destination, uint256 maxSlippageBps) external;
+
+    // Reverse conversions: USDC to sUSDS
+
+    // Convert specific amount with no slippage tolerance
+    function gemToSusds(address destination, uint256 gemAmt) external;
+
+    // Convert with custom slippage tolerance (in basis points)
+    function gemToSusds(address destination, uint256 gemAmt, uint256 maxSlippageBps) external;
+
+    // Convert entire USDC balance
+    function allGemToSusds(address destination) external;
+
+    // Convert all with slippage tolerance
+    function allGemToSusds(address destination, uint256 maxSlippageBps) external;
+}
+```
+
+<details>
+<summary><b>📖 Detailed Documentation</b></summary>
 
 ### Features
 
@@ -121,38 +167,6 @@ sequenceDiagram
 
 ### Usage
 
-#### Smart Contract Interface
-
-```solidity
-interface ISusdsGem {
-    // Convert specific amount with no slippage tolerance
-    function susdsToGem(address destination, uint256 sUsdsWad) external;
-
-    // Convert with custom slippage tolerance (in basis points)
-    function susdsToGem(address destination, uint256 sUsdsWad, uint256 maxSlippageBps) external;
-
-    // Convert entire sUSDS balance
-    function allSusdsToGem(address destination) external;
-
-    // Convert all with slippage tolerance
-    function allSusdsToGem(address destination, uint256 maxSlippageBps) external;
-
-    // Reverse conversions: USDC to sUSDS
-
-    // Convert specific amount with no slippage tolerance
-    function gemToSusds(address destination, uint256 gemAmt) external;
-
-    // Convert with custom slippage tolerance (in basis points)
-    function gemToSusds(address destination, uint256 gemAmt, uint256 maxSlippageBps) external;
-
-    // Convert entire USDC balance
-    function allGemToSusds(address destination) external;
-
-    // Convert all with slippage tolerance
-    function allGemToSusds(address destination, uint256 maxSlippageBps) external;
-}
-```
-
 #### Example Integration
 
 ```solidity
@@ -251,11 +265,15 @@ This codebase has **NOT** been audited by professional security firms. Users sho
 
 ### Testing
 
-Run the test suite for SusdsGem:
+Run the test suite for all contracts:
 
 ```bash
 # Run all tests
 forge test
+
+# Run specific contract tests
+forge test --match-contract SusdsGemTest
+forge test --match-contract SusdsStusdsTest
 
 # Run with verbosity
 forge test -vv
@@ -278,6 +296,155 @@ The contract is optimized for gas efficiency:
 - Batch operations to reduce per-transaction overhead
 
 Typical gas usage: ~400,000 gas per conversion
+
+</details>
+
+## SusdsStusds
+
+This contract enables seamless bidirectional conversion between sUSDS (Savings USDS) and stUSDS (Staked USDS) tokens through atomic vault operations.
+
+**Features:** 🔄 Vault-to-vault conversion • ⚡ Atomic operations • 🔒 Non-custodial • 📊 Share & asset-based
+
+**Gas Usage:** ~250k gas per conversion
+
+### Interface
+
+```solidity
+interface ISusdsStusds {
+    // Share-based conversions (redeem/deposit shares)
+    function susdsToStusds(address dst, uint256 wad) external returns (uint256 usdsAmount);
+    function stusdsToSusds(address dst, uint256 wad) external returns (uint256 usdsAmount);
+    
+    // Convert entire balance
+    function allSusdsToStusds(address dst) external returns (uint256 usdsAmount);
+    function allStusdsToSusds(address dst) external returns (uint256 usdsAmount);
+    
+    // Asset-based conversions (withdraw/deposit specific USDS amounts)
+    function usdsFromSusdsToStusds(address dst, uint256 wad) 
+        external returns (uint256 stusdsSharesOut, uint256 susdsSharesIn);
+    function usdsFromStusdsToSusds(address dst, uint256 wad) 
+        external returns (uint256 susdsSharesOut, uint256 stusdsSharesIn);
+}
+```
+
+<details>
+<summary><b>📖 Detailed Documentation</b></summary>
+
+### Features
+
+- 🔄 Bidirectional conversion between sUSDS and stUSDS
+- 💰 Direct vault-to-vault conversion without intermediate tokens
+- ⚡ Gas-efficient atomic operations
+- 🔒 Non-custodial (no token storage)
+- 📊 Support for both share-based and asset-based conversions
+
+### How It Works
+
+Both sUSDS and stUSDS are ERC4626 vaults backed by the same underlying USDS asset, enabling seamless conversions.
+
+#### sUSDS to stUSDS
+
+```mermaid
+graph LR
+    A[sUSDS] -->|Redeem| B[USDS]
+    B -->|Deposit| C[stUSDS]
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#f3e5f5
+```
+
+#### stUSDS to sUSDS
+
+```mermaid
+graph LR
+    A[stUSDS] -->|Redeem| B[USDS]
+    B -->|Deposit| C[sUSDS]
+
+    style A fill:#f3e5f5
+    style B fill:#fff3e0
+    style C fill:#e1f5fe
+```
+
+### Usage
+
+#### Example Integration
+
+```solidity
+// Approve the converter
+IERC20(sUSDS).approve(converterAddress, amount);
+
+// Convert 100 sUSDS shares to stUSDS
+uint256 usdsSwapped = converter.susdsToStusds(myAddress, 100e18);
+
+// Convert all sUSDS balance to stUSDS
+converter.allSusdsToStusds(myAddress);
+
+// Asset-based conversion: withdraw exactly 100 USDS from sUSDS and deposit into stUSDS
+(uint256 stusdsOut, uint256 susdsIn) = converter.usdsFromSusdsToStusds(myAddress, 100e18);
+
+// Reverse conversions
+IERC20(stUSDS).approve(converterAddress, amount);
+converter.stusdsToSusds(myAddress, 100e18);
+```
+
+### Contract Architecture
+
+```mermaid
+graph TB
+    subgraph "External Contracts"
+        A[sUSDS Vault]
+        B[stUSDS Vault]
+        C[USDS Token]
+    end
+
+    subgraph "SusdsStusds"
+        D[Constructor]
+        E[susdsToStusds]
+        F[stusdsToSusds]
+        G[allSusdsToStusds]
+        H[allStusdsToSusds]
+        I[usdsFromSusdsToStusds]
+        J[usdsFromStusdsToSusds]
+    end
+
+    D -->|Validates Assets| A
+    D -->|Validates Assets| B
+    D -->|Stores Reference| C
+    D -->|Approves Max| C
+
+    E -->|Redeem + Deposit| A
+    E -->|Redeem + Deposit| B
+    F -->|Redeem + Deposit| B
+    F -->|Redeem + Deposit| A
+    G -->|All Balance| E
+    H -->|All Balance| F
+    I -->|Withdraw + Deposit| A
+    I -->|Withdraw + Deposit| B
+    J -->|Withdraw + Deposit| B
+    J -->|Withdraw + Deposit| A
+```
+
+### Deployment Addresses
+
+#### Ethereum Mainnet
+
+| Contract | Address |
+| -------- | ------- |
+| SusdsStusds | TODO |
+
+### Gas Optimization
+
+The SusdsStusds contract is optimized for gas efficiency:
+
+- Single approval setup in constructor
+- Direct vault-to-vault operations (no intermediate tokens)
+- Minimal external calls per conversion
+- Atomic operations to reduce transaction overhead
+
+Typical gas usage: ~250,000 gas per conversion
+
+</details>
 
 ## Installation
 
